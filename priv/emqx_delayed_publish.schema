@@ -1,0 +1,9 @@
+{mapping, "delayed.publish.filter.$id", "emqx_delayed_publish.filters", [
+  {default, "delayed/#"},
+  {datatype, string}
+]}.
+
+{translation, "emqx_delayed_publish.filters", fun(Conf) ->
+  Filters = cuttlefish_variable:filter_by_prefix("delayed.publish.filter", Conf),
+  lists:usort(lists:map(fun({_, Val}) -> list_to_binary(Val) end, Filters))
+end}.
