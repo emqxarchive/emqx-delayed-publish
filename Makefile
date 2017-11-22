@@ -1,6 +1,6 @@
 PROJECT = emqx_delayed_publish
 PROJECT_DESCRIPTION = EMQ X Delayed Publish
-PROJECT_VERSION = 2.4
+PROJECT_VERSION = 2.3.0
 
 NO_AUTOPATCH = cuttlefish
 
@@ -8,7 +8,7 @@ DEPS = jsx
 dep_jsx = git https://github.com/talentdeficit/jsx
 
 BUILD_DEPS = emqx cuttlefish
-dep_emqx = git https://github.com/emqtt/emqttd X
+dep_emqx = git git@github.com:emqx/emqx-enterprise
 dep_cuttlefish = git https://github.com/emqtt/cuttlefish
 
 ERLC_OPTS += +debug_info
