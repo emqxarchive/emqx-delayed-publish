@@ -1,6 +1,6 @@
 PROJECT = emqx_delayed_publish
 PROJECT_DESCRIPTION = EMQ X Delayed Publish
-PROJECT_VERSION = 2.3.0
+PROJECT_VERSION = 2.4
 
 NO_AUTOPATCH = cuttlefish
 
