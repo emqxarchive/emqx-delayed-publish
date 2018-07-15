@@ -12,23 +12,10 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(emqx_delayed_publish_sup).
+-module(emqx_delayed_publish_SUITE).
 
--behaviour(supervisor).
+-compile(export_all).
+-compile(nowarn_export_all).
 
--export([start_link/0]).
-
--export([init/1]).
-
-start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
-
-init([]) ->
-    {ok, {{one_for_one, 10, 100},
-          [#{id       => delayed_publish,
-             start    => {emqx_delayed_publish, start_link, []},
-             restart  => permanent,
-             shutdown => 5000,
-             type     => worker,
-             modules  => [emqx_delayed_publish]}]}}.
+all() -> [].
 

@@ -1,5 +1,4 @@
-%%--------------------------------------------------------------------
-%% Copyright (c) 2013-2017 EMQ Enterprise, Inc. (http://emqtt.io)
+%% Copyright (c) 2018 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -12,8 +11,8 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%%--------------------------------------------------------------------
 
+%% TODO: store the delayed publish.
 -module(emqx_delayed_publish).
 
 -behaviour(gen_server).
@@ -22,21 +21,21 @@
 
 -export([load/0, unload/0]).
 
-%% Hook Callbacks
+%% Hook callbacks
 -export([on_message_publish/2]).
 
 -export([start_link/0]).
 
 %% gen_server Callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+         code_change/3]).
 
 -define(APP, ?MODULE).
 
 -record(state, {}).
 
 %%--------------------------------------------------------------------
-%% Load The Plugin
+%% Load the plugin
 %%--------------------------------------------------------------------
 
 load() ->
@@ -67,8 +66,8 @@ on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
                 {stop, Msg}
         end
     catch
-        _:Reason->
-            lager:error("Delayed publish reason ~p, error:~p", [Reason, erlang:get_stacktrace()]),
+        _:Reason:Statcktrace ->
+            emqx_logger:error("Delayed publish error: ~p~n~p", [Reason, Statcktrace]),
             {ok, Msg}
     end;
 
@@ -88,7 +87,7 @@ init([]) ->
     {ok, #state{}}.
 
 handle_call(_Req, _From, State) ->
-    {reply, ok, State}.
+    {reply, ignored, State}.
 
 handle_cast({delayed_publish, Topic, Msg, DelayTime}, State) ->
     Interval = (DelayTime*1000) - erlang:system_time(milli_seconds),
@@ -96,7 +95,7 @@ handle_cast({delayed_publish, Topic, Msg, DelayTime}, State) ->
     {noreply, State, hibernate}.
 
 handle_info({release_publish, Topic, Msg}, State) ->
-    emqx_pubsub:publish(Topic, Msg),
+    emqx_broker:publish(Topic, Msg),
     {noreply, State, hibernate};
 
 handle_info(_Info, State) ->

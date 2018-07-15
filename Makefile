@@ -4,18 +4,13 @@ PROJECT_VERSION = 3.0
 
 NO_AUTOPATCH = cuttlefish
 
-DEPS = jsx
-dep_jsx = git https://github.com/talentdeficit/jsx
-
 BUILD_DEPS = emqx cuttlefish
 dep_emqx = git https://github.com/emqtt/emqttd emqx30
 dep_cuttlefish = git https://github.com/emqtt/cuttlefish
 
 ERLC_OPTS += +debug_info
-ERLC_OPTS += +'{parse_transform, lager_transform}'
 
 TEST_ERLC_OPTS += +debug_info
-TEST_ERLC_OPTS += +'{parse_transform, lager_transform}'
 
 EUNIT_OPTS = verbose
 
