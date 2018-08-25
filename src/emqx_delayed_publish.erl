@@ -64,10 +64,9 @@ on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
                 {ok, Msg};
             [_] ->
                 DelayTime1 = binary_to_integer(DelayTime0),
-                DelayTime = case DelayTime1 > 0 of
+                case DelayTime1 > 0 of
                     true ->
-                        DelayTime1 + erlang:system_time(seconds),
-                        delayed_publish(Topic, Msg#mqtt_message{topic = Topic}, DelayTime),
+                        delayed_publish(Topic, Msg#mqtt_message{topic = Topic}, DelayTime1 + erlang:system_time(seconds)),
                         {stop, Msg};
                     false ->
                         {stop, Msg}
