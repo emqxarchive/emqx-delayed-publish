@@ -71,6 +71,7 @@ on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
                         {stop, Msg};
                     false ->
                         {stop, Msg}
+                end
         end
     catch
         _:Reason->
