@@ -23,11 +23,11 @@
 %% Supervisor callbacks
 -export([init/1]).
 
--define(CHILD(M), {M, {M, start_link, []}, permanent, 5000, worker, [M]}).
-
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, {{one_for_one, 10, 100}, [?CHILD(emqx_delayed_publish)]}}.
+	MFA = {emqx_delayed_publish, start_link, []},
+    PoolSup = emqx_pool_sup:spec([emqx_delayed_publish, hash, erlang:system_info(schedulers), MFA]),
+    {ok, {{one_for_one, 10, 3600}, [PoolSup]}}.
 

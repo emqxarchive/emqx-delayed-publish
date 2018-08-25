@@ -19,21 +19,22 @@
 -behaviour(gen_server).
 
 -include_lib("emqx/include/emqx.hrl").
-
+-include_lib("emqx/include/emqx_internal.hrl").
 -export([load/0, unload/0]).
 
 %% Hook Callbacks
 -export([on_message_publish/2]).
 
--export([start_link/0]).
+-export([start_link/2]).
 
 %% gen_server Callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
 -define(APP, ?MODULE).
+-define(POOL, ?MODULE).
 
--record(state, {}).
+-record(state, {pool, id}).
 
 %%--------------------------------------------------------------------
 %% Load The Plugin
@@ -62,9 +63,14 @@ on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
             [] ->
                 {ok, Msg};
             [_] ->
-                DelayTime =  binary_to_integer(DelayTime0) + erlang:system_time(seconds),
-                delayed_publish(Topic, Msg#mqtt_message{topic = Topic}, DelayTime),
-                {stop, Msg}
+                DelayTime1 = binary_to_integer(DelayTime0),
+                DelayTime = case DelayTime1 > 0 of
+                    true ->
+                        DelayTime1 + erlang:system_time(seconds),
+                        delayed_publish(Topic, Msg#mqtt_message{topic = Topic}, DelayTime),
+                        {stop, Msg};
+                    false ->
+                        {stop, Msg}
         end
     catch
         _:Reason->
@@ -75,17 +81,19 @@ on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
 on_message_publish(_, Msg, _Filters) ->
     {ok, Msg}.
 
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Pool, Id) ->
+    gen_server:start_link({local, ?PROC_NAME(?MODULE, Id)}, ?MODULE, [Pool, Id], []).
 
 delayed_publish(Topic, Msg, DelayTime) ->
-    gen_server:cast(?MODULE, {delayed_publish, Topic, Msg, DelayTime}).
+    Pid = gproc_pool:pick_worker(?POOL, Topic),
+    gen_server:cast(Pid, {delayed_publish, Topic, Msg, DelayTime}).
 
 %%--------------------------------------------------------------------
 %% gen_server callback
 %%--------------------------------------------------------------------
-init([]) ->
-    {ok, #state{}}.
+init([Pool, Id]) ->
+    ?GPROC_POOL(join, Pool, Id),
+    {ok, #state{pool = Pool, id = Id}}.
 
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
@@ -102,8 +110,8 @@ handle_info({release_publish, Topic, Msg}, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_, _) ->
-    ok.
+terminate(_Reason, #state{pool = Pool, id = Id}) ->
+    ?GPROC_POOL(leave, Pool, Id).
 
 code_change(_, State, _) ->
     {ok, State}.
