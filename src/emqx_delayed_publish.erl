@@ -51,7 +51,7 @@ unload() ->
 %% Delayed Publish Message
 %%--------------------------------------------------------------------
 
-on_message_publish(Msg = #mqtt_message{topic = Topic}, Filters) ->
+on_message_publish(Msg = #message{topic = Topic}, Filters) ->
     on_message_publish(binary:split(Topic, <<"/">>, [global]), Msg, Filters).
 
 on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
@@ -62,7 +62,7 @@ on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
                 {ok, Msg};
             [_] ->
                 DelayTime =  binary_to_integer(DelayTime0) + erlang:system_time(seconds),
-                delayed_publish(Topic, Msg#mqtt_message{topic = Topic}, DelayTime),
+                delayed_publish(Topic, Msg#message{topic = Topic}, DelayTime),
                 {stop, Msg}
         end
     catch
