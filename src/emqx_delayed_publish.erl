@@ -61,7 +61,7 @@ on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
             [] ->
                 {ok, Msg};
             [_] ->
-                DelayTime =  binary_to_integer(DelayTime0) + erlang:system_time(seconds),
+                DelayTime =  binary_to_integer(DelayTime0),
                 delayed_publish(Topic, Msg#message{topic = Topic}, DelayTime),
                 {stop, Msg}
         end
@@ -90,12 +90,11 @@ handle_call(_Req, _From, State) ->
     {reply, ignored, State}.
 
 handle_cast({delayed_publish, Topic, Msg, DelayTime}, State) ->
-    Interval = (DelayTime*1000) - erlang:system_time(milli_seconds),
-    erlang:send_after(Interval, self(), {release_publish, Topic, Msg}),
+    erlang:send_after(DelayTime * 1000, self(), {release_publish, Topic, Msg}),
     {noreply, State, hibernate}.
 
 handle_info({release_publish, Topic, Msg}, State) ->
-    emqx_broker:publish(Topic, Msg),
+    emqx_broker:safe_publish(Msg),
     {noreply, State, hibernate};
 
 handle_info(_Info, State) ->
