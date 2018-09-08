@@ -22,7 +22,7 @@
 -export([load/0, unload/0]).
 
 %% Hook callbacks
--export([on_message_publish/2]).
+-export([on_message_publish/1]).
 
 -export([start_link/0]).
 
@@ -34,51 +34,23 @@
 
 -record(state, {}).
 
-%%--------------------------------------------------------------------
-%% Load the plugin
-%%--------------------------------------------------------------------
-
-load() ->
-    Filters = application:get_env(?APP, filters, []),
-    emqx:hook('message.publish', fun ?MODULE:on_message_publish/2, [Filters]),
-    io:format("~s is loaded.~n", [?APP]), ok.
-
-unload() ->
-    emqx:unhook('message.publish', fun ?MODULE:on_message_publish/2),
-    io:format("~s is unloaded.~n", [?APP]), ok.
-
-%%--------------------------------------------------------------------
-%% Delayed Publish Message
-%%--------------------------------------------------------------------
-
-on_message_publish(Msg = #message{topic = Topic}, Filters) ->
-    on_message_publish(binary:split(Topic, <<"/">>, [global]), Msg, Filters).
-
-on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
-    try
-        Topic = emqx_topic:join(Topic0),
-        case lists:filter(fun(Filter) -> emqx_topic:match(Topic, Filter) end, Filters) of
-            [] ->
-                {ok, Msg};
-            [_] ->
-                DelayTime =  binary_to_integer(DelayTime0),
-                delayed_publish(Topic, Msg#message{topic = Topic}, DelayTime),
-                {stop, Msg}
-        end
-    catch
-        _:Reason:Statcktrace ->
-            emqx_logger:error("Delayed publish error: ~p~n~p", [Reason, Statcktrace]),
-            {ok, Msg}
-    end;
-
-on_message_publish(_, Msg, _Filters) ->
-    {ok, Msg}.
-
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-delayed_publish(Topic, Msg, DelayTime) ->
-    gen_server:cast(?MODULE, {delayed_publish, Topic, Msg, DelayTime}).
+%%--------------------------------------------------------------------
+%% Plugin callbacks
+%%--------------------------------------------------------------------
+
+load() ->
+    emqx:hook('message.publish', fun ?MODULE:on_message_publish/1, []),
+    io:format("~s is loaded.~n", [?APP]), ok.
+
+unload() ->
+    emqx:unhook('message.publish', fun ?MODULE:on_message_publish/1),
+    io:format("~s is unloaded.~n", [?APP]), ok.
+
+on_message_publish(Msg = #message{topic = Topic}) ->
+    do_publish(binary:split(Topic, <<"/">>, [global]), Msg).
 
 %%--------------------------------------------------------------------
 %% gen_server callback
@@ -89,13 +61,12 @@ init([]) ->
 handle_call(_Req, _From, State) ->
     {reply, ignored, State}.
 
-handle_cast({delayed_publish, Topic, Msg, DelayTime}, State) ->
-    erlang:send_after(DelayTime * 1000, self(), {release_publish, Topic, Msg}),
-    {noreply, State, hibernate}.
+handle_cast(_Req, State) ->
+    {noreply, State}.
 
-handle_info({release_publish, Topic, Msg}, State) ->
+handle_info({delayed_publish, Msg}, State) ->
     emqx_broker:safe_publish(Msg),
-    {noreply, State, hibernate};
+    {noreply, State};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -106,3 +77,23 @@ terminate(_, _) ->
 code_change(_, State, _) ->
     {ok, State}.
 
+%%--------------------------------------------------------------------
+%% Internal Functions
+%%--------------------------------------------------------------------
+
+do_publish([<<"$delayed">>, DelaySec | Rem], Msg) ->
+    try
+        DelayedMsg = {delayed_publish, Msg#message{topic = emqx_topic:join(Rem)}},
+        DelayTime = to_millisec(binary_to_integer(DelaySec)),
+        erlang:send_after(DelayTime, ?MODULE, DelayedMsg),
+        {stop, Msg}
+    catch
+        _:Reason:Statcktrace ->
+            emqx_logger:error("Delayed publish error: ~p~n~p", [Reason, Statcktrace]),
+            {ok, Msg}
+    end;
+
+do_publish(_NonDelayed, Msg) ->
+    {ok, Msg}.
+
+to_millisec(Sec) -> Sec * 1000.
