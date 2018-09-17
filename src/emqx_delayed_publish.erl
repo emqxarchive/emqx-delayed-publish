@@ -23,7 +23,7 @@
 
 -export([start_link/0]).
 
-%% gen_server Callbacks
+%% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
@@ -31,6 +31,7 @@
 
 -define(TAB, ?MODULE).
 -define(SERVER, ?MODULE).
+-define(MAX_INTERVAL, 4294967).
 
 %%-type(state() :: #{timer => reference(), publish_at => integer()}).
 
@@ -42,18 +43,28 @@
 load() ->
     emqx:hook('message.publish', {?MODULE, on_message_publish, []}).
 
-on_message_publish(Msg = #message{topic = <<"$delay/", Topic/binary>>}) ->
+on_message_publish(Msg = #message{id = Id, topic = <<"$delay/", Topic/binary>>, timestamp = Ts}) ->
     [Delay, Topic1] = binary:split(Topic, <<"/">>),
+    PubAt = case binary_to_integer(Delay) of
+                Interval when Interval < ?MAX_INTERVAL ->
+                    Interval + emqx_time:now_secs(Ts);
+                Timestamp ->
+                    %% Check malicious timestamp?
+                    case (Timestamp - emqx_time:now_secs(Ts)) > ?MAX_INTERVAL of
+                        true  -> error(invalid_delayed_timestamp);
+                        false -> Timestamp
+                    end
+            end,
     PubMsg = Msg#message{topic = Topic1},
-    ok = store(delayed_msg(binary_to_integer(Delay), PubMsg)),
+    ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, msg = PubMsg}),
     {stop, PubMsg};
 
 on_message_publish(_Msg) ->
     ok.
 
-delayed_msg(Secs, Msg = #message{id = Mid, timestamp = Ts}) ->
-    Id = if Mid =:= undefined -> emqx_guid:gen(); true -> Mid end,
-    #delayed_message{key = {emqx_time:now_secs(Ts) + Secs, Id}, msg = Msg}.
+delayed_mid(undefined) ->
+    emqx_guid:gen();
+delayed_mid(MsgId) -> MsgId.
 
 -spec(unload() -> ok).
 unload() ->
