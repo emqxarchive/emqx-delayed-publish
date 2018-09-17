@@ -15,6 +15,7 @@ $delay/{DelayInterval}/{TopicName}
 
 - `$delay` is a literal string that marks the Topic Name as being a delayed topic.
 - `{DelayInterval}` The Delayed Interval which specifies the delay seconds of a MQTT message.
+  The max interval allowed is 4294967.
 - `{TopicName}` The topic name of a MQTT message
 
 
