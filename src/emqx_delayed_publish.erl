@@ -43,7 +43,7 @@
 load() ->
     emqx:hook('message.publish', {?MODULE, on_message_publish, []}).
 
-on_message_publish(Msg = #message{id = Id, topic = <<"$delay/", Topic/binary>>, timestamp = Ts}) ->
+on_message_publish(Msg = #message{id = Id, topic = <<"$delayed/", Topic/binary>>, timestamp = Ts}) ->
     [Delay, Topic1] = binary:split(Topic, <<"/">>),
     PubAt = case binary_to_integer(Delay) of
                 Interval when Interval < ?MAX_INTERVAL ->
@@ -59,8 +59,8 @@ on_message_publish(Msg = #message{id = Id, topic = <<"$delay/", Topic/binary>>, 
     ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, msg = PubMsg}),
     {stop, PubMsg};
 
-on_message_publish(_Msg) ->
-    ok.
+on_message_publish(Msg) ->
+    {ok, Msg}.
 
 delayed_mid(undefined) ->
     emqx_guid:gen();
