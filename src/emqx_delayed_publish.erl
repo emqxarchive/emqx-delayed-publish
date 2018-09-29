@@ -147,7 +147,7 @@ ensure_publish_timer(Ts, Now, State) ->
     TRef = emqx_misc:start_timer(timer:seconds(Interval), do_publish),
     State#{timer := TRef, publish_at := Now + Interval}.
 
-%% Do publish
+%% Do Publish
 do_publish('$end_of_table', _Now) ->
     ok;
 do_publish({Ts, _Id}, Now) when Ts > Now ->
@@ -156,6 +156,7 @@ do_publish(Key = {Ts, _Id}, Now) when Ts =< Now ->
     case mnesia:dirty_read(?TAB, Key) of
         [] -> ok;
         [#delayed_message{msg = Msg}] ->
+            _ = mnesia:dirty_delete(?TAB, Key),
             emqx_pool:async_submit(fun emqx_broker:publish/1, [Msg])
     end,
     do_publish(mnesia:dirty_next(?TAB, Key), Now).
