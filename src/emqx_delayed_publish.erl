@@ -110,7 +110,8 @@ handle_cast(Msg, State) ->
 
 %% Do Publish...
 handle_info({timeout, TRef, do_publish}, State = #{timer := TRef}) ->
-    _ = do_publish(mnesia:dirty_first(?TAB), os:system_time(seconds)),
+    DeletedKeys = do_publish(mnesia:dirty_first(?TAB), os:system_time(seconds)),
+    lists:foreach(fun(Key) -> mnesia:dirty_delete(?TAB, Key) end, DeletedKeys),
     {noreply, ensure_publish_timer(State#{timer := undefined, publish_at := 0})};
 
 handle_info(Info, State) ->
@@ -147,17 +148,19 @@ ensure_publish_timer(Ts, Now, State) ->
     TRef = emqx_misc:start_timer(timer:seconds(Interval), do_publish),
     State#{timer := TRef, publish_at := Now + Interval}.
 
-%% Do Publish
-do_publish('$end_of_table', _Now) ->
-    ok;
-do_publish({Ts, _Id}, Now) when Ts > Now ->
-    ok;
-do_publish(Key = {Ts, _Id}, Now) when Ts =< Now ->
+do_publish(Key, Now) ->
+    do_publish(Key, Now, []).
+
+%% Do publish
+do_publish('$end_of_table', _Now, Acc) ->
+    Acc;
+do_publish({Ts, _Id}, Now, Acc) when Ts > Now ->
+    Acc;
+do_publish(Key = {Ts, _Id}, Now, Acc) when Ts =< Now ->
     case mnesia:dirty_read(?TAB, Key) of
         [] -> ok;
         [#delayed_message{msg = Msg}] ->
-            _ = mnesia:dirty_delete(?TAB, Key),
             emqx_pool:async_submit(fun emqx_broker:publish/1, [Msg])
     end,
-    do_publish(mnesia:dirty_next(?TAB, Key), Now).
+    do_publish(mnesia:dirty_next(?TAB, Key), Now, [Key|Acc]).
 
