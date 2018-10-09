@@ -19,7 +19,7 @@
 -include_lib("emqx/include/emqx.hrl").
 
 %% Hook callbacks
--export([load/0, on_message_publish/1, unload/0]).
+-export([load/0, on_message_publish/1, on_session_resumed/2, unload/0]).
 
 -export([start_link/0]).
 
@@ -27,7 +27,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
--record(delayed_message, {key, msg}).
+-record(delayed_message, {key, session, msg}).
 
 -define(TAB, ?MODULE).
 -define(SERVER, ?MODULE).
@@ -41,26 +41,21 @@
 
 -spec(load() -> ok).
 load() ->
-    emqx:hook('message.publish', {?MODULE, on_message_publish, []}).
+    emqx:hook('message.publish', {?MODULE, on_message_publish, []}),
+    emqx:hook('session.resumed', {?MODULE, on_session_resumed, []}).
 
-on_message_publish(Msg = #message{id = Id, topic = <<"$delayed/", Topic/binary>>, timestamp = Ts}) ->
+on_message_publish(Msg = #message{topic = <<"$delayed/", Topic/binary>>}) ->
     [Delay, Topic1] = binary:split(Topic, <<"/">>),
-    PubAt = case binary_to_integer(Delay) of
-                Interval when Interval < ?MAX_INTERVAL ->
-                    Interval + emqx_time:now_secs(Ts);
-                Timestamp ->
-                    %% Check malicious timestamp?
-                    case (Timestamp - emqx_time:now_secs(Ts)) > ?MAX_INTERVAL of
-                        true  -> error(invalid_delayed_timestamp);
-                        false -> Timestamp
-                    end
-            end,
-    PubMsg = Msg#message{topic = Topic1},
-    ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, msg = PubMsg}),
-    {stop, PubMsg};
-
+    handle_message(undefined, binary_to_integer(Delay), Msg#message{topic = Topic1});
+on_message_publish(Msg = #message{topic = <<"$will/", Topic/binary>>}) ->
+    [Session, Topic1] = binary:split(Topic, <<"/">>),
+    [Delay, Topic2] = binary:split(Topic1, <<"/">>),
+    handle_message(list_to_pid(binary_to_list(Session)), binary_to_integer(Delay), Msg#message{topic = Topic2});
 on_message_publish(Msg) ->
     {ok, Msg}.
+
+on_session_resumed(#{session := Session}, _Attrs) ->
+    gen_server:call(?SERVER, {session_resumed, Session}, infinity).
 
 delayed_mid(undefined) ->
     emqx_guid:gen();
@@ -100,6 +95,26 @@ handle_call({store, DelayedMsg = #delayed_message{key = Key}}, _From, State) ->
     ok = mnesia:dirty_write(?TAB, DelayedMsg),
     {reply, ok, ensure_publish_timer(Key, State)};
 
+handle_call({session_resumed, Session}, _From, State = #{timer := TRef}) ->
+    case mnesia:dirty_select(?TAB, [{#delayed_message{session = Session, _ = '_'}, [], ['$_']}]) of
+        [] -> 
+            {reply, ok, State};
+        WillMsgs ->
+            Result = lists:keysearch(mnesia:dirty_first(?TAB), 2, WillMsgs),
+            lists:foreach(fun(#delayed_message{key = Key}) ->
+                            mnesia:dirty_delete({?TAB, Key})
+                        end, WillMsgs),
+            case Result of 
+                {value, _Msg} when TRef =:= undefined ->
+                    {reply, ok, ensure_publish_timer(State#{timer := undefined, publish_at := 0})};
+                {value, _Msg} ->
+                    emqx_misc:cancel_timer(TRef),
+                    {reply, ok, ensure_publish_timer(State#{timer := undefined, publish_at := 0})};
+                false ->
+                    {reply, ok, State}
+            end
+    end;
+    
 handle_call(Req, _From, State) ->
     emqx_logger:error("[Delayed] unexpected call: ~p", [Req]),
     {reply, ignored, State}.
@@ -127,6 +142,20 @@ code_change(_OldVsn, State, _Extra) ->
 %%------------------------------------------------------------------------------
 %% Internal functions
 %%------------------------------------------------------------------------------
+
+handle_message(Session, Delay, Msg = #message{id = Id, timestamp = Ts}) ->
+    PubAt = case Delay of
+                Interval when Interval < ?MAX_INTERVAL ->
+                    Interval + emqx_time:now_secs(Ts);
+                Timestamp ->
+                    %% Check malicious timestamp?
+                    case (Timestamp - emqx_time:now_secs(Ts)) > ?MAX_INTERVAL of
+                        true  -> error(invalid_delayed_timestamp);
+                        false -> Timestamp
+                    end
+            end,
+    ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, session = Session, msg = Msg}),
+    {stop, Msg}.
 
 %% Ensure publish timer
 ensure_publish_timer(State) ->
