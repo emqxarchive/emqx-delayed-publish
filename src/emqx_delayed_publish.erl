@@ -27,7 +27,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
--record(delayed_message, {key, session, msg}).
+-record(delayed_message, {key, client, msg}).
 
 -define(TAB, ?MODULE).
 -define(SERVER, ?MODULE).
@@ -47,15 +47,14 @@ load() ->
 on_message_publish(Msg = #message{topic = <<"$delayed/", Topic/binary>>}) ->
     [Delay, Topic1] = binary:split(Topic, <<"/">>),
     handle_message(undefined, binary_to_integer(Delay), Msg#message{topic = Topic1});
-on_message_publish(Msg = #message{topic = <<"$will/", Topic/binary>>}) ->
-    [Session, Topic1] = binary:split(Topic, <<"/">>),
-    [Delay, Topic2] = binary:split(Topic1, <<"/">>),
-    handle_message(list_to_pid(binary_to_list(Session)), binary_to_integer(Delay), Msg#message{topic = Topic2});
+on_message_publish(Msg = #message{topic = <<"$will/", Topic/binary>>, headers = #{client_id := ClientId}}) ->
+    [Delay, Topic1] = binary:split(Topic, <<"/">>),
+    handle_message(ClientId, binary_to_integer(Delay), Msg#message{topic = Topic1});
 on_message_publish(Msg) ->
     {ok, Msg}.
 
-on_session_resumed(#{session := Session}, _Attrs) ->
-    gen_server:call(?SERVER, {session_resumed, Session}, infinity).
+on_session_resumed(#{client_id := ClientId}, _Attrs) ->
+    gen_server:call(?SERVER, {session_resumed, ClientId}, infinity).
 
 delayed_mid(undefined) ->
     emqx_guid:gen();
@@ -95,8 +94,8 @@ handle_call({store, DelayedMsg = #delayed_message{key = Key}}, _From, State) ->
     ok = mnesia:dirty_write(?TAB, DelayedMsg),
     {reply, ok, ensure_publish_timer(Key, State)};
 
-handle_call({session_resumed, Session}, _From, State = #{timer := TRef}) ->
-    case mnesia:dirty_select(?TAB, [{#delayed_message{session = Session, _ = '_'}, [], ['$_']}]) of
+handle_call({session_resumed, ClientId}, _From, State = #{timer := TRef}) ->
+    case mnesia:dirty_select(?TAB, [{#delayed_message{client = ClientId, _ = '_'}, [], ['$_']}]) of
         [] -> 
             {reply, ok, State};
         WillMsgs ->
@@ -143,7 +142,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%------------------------------------------------------------------------------
 
-handle_message(Session, Delay, Msg = #message{id = Id, timestamp = Ts}) ->
+handle_message(ClientId, Delay, Msg = #message{id = Id, timestamp = Ts}) ->
     PubAt = case Delay of
                 Interval when Interval < ?MAX_INTERVAL ->
                     Interval + emqx_time:now_secs(Ts);
@@ -154,7 +153,7 @@ handle_message(Session, Delay, Msg = #message{id = Id, timestamp = Ts}) ->
                         false -> Timestamp
                     end
             end,
-    ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, session = Session, msg = Msg}),
+    ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, client = ClientId, msg = Msg}),
     {stop, Msg}.
 
 %% Ensure publish timer
