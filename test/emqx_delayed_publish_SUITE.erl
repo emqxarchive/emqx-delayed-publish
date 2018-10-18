@@ -17,5 +17,66 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
-all() -> [].
+-record(delayed_message, {key, msg}).
 
+-include_lib("common_test/include/ct.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
+
+-include_lib("emqx/include/emqx.hrl").
+
+all() ->
+    [{group, load},
+     {group, emqx_delayed_publish}].
+
+groups() ->
+    [{load, [sequence], [load_case]},
+     {emqx_delayed_publish, [sequence], [delayed_message]}].
+
+init_per_suite(Config) ->
+    DataDir = proplists:get_value(data_dir, Config),
+    [start_apps(App, DataDir) || App <- [emqx, emqx_delayed_publish]],
+    Config.
+
+end_per_suite(_Config) ->
+    [application:stop(App) || App <- [emqx_delayed_publish, emqx]].
+
+load_case(_Config) ->
+    ok = emqx_delayed_publish:unload(),
+    timer:sleep(100),
+    UnHooks = emqx_hooks:lookup('message.publish'),
+    ?assertEqual([], UnHooks),
+    ok = emqx_delayed_publish:load(),
+    Hooks = emqx_hooks:lookup('message.publish'),
+    ?assertEqual(1, length(Hooks)),
+    ok.
+
+delayed_message(_Config) ->
+    DelayedMsg = emqx_message:make(?MODULE, 1, <<"$delayed/5/publish">>, <<"delayed_m">>),
+    ?assertEqual({stop, DelayedMsg#message{topic = <<"publish">>}}, on_message_publish(DelayedMsg)),
+
+    Msg = emqx_message:make(?MODULE, 1, <<"publish">>, <<"delayed_m">>),
+    ?assertEqual({ok, Msg}, on_message_publish(Msg)),
+
+    [Key] = mnesia:dirty_all_keys(emqx_delayed_publish),
+    [#delayed_message{msg = #message{payload = Payload}}] = mnesia:dirty_read({emqx_delayed_publish, Key}),
+    ?assertEqual(<<"delayed_m">>, Payload),
+    timer:sleep(60000),
+
+    EmptyKey = mnesia:dirty_all_keys(emqx_delayed_publish),
+    ?assertEqual([], EmptyKey),
+    %%TODO
+    %% ExMsg = emqx_message:make(emqx_delayed_publish_SUITE, 1, <<"$delayed/time/publish">>, <<"delayed_message">>),
+    %% {ok, _} = on_message_publish(ExMsg),
+    ok.
+
+on_message_publish(Msg) ->
+    emqx_delayed_publish:on_message_publish(Msg).
+
+start_apps(App, DataDir) ->
+    Schema = cuttlefish_schema:files([filename:join([DataDir, atom_to_list(App) ++ ".schema"])]),
+    Conf = conf_parse:file(filename:join([DataDir, atom_to_list(App) ++ ".conf"])),
+    NewConfig = cuttlefish_generator:map(Schema, Conf),
+    Vals = proplists:get_value(App, NewConfig, []),
+    [application:set_env(App, Par, Value) || {Par, Value} <- Vals],
+    application:ensure_all_started(App).
