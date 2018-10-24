@@ -20,8 +20,9 @@
 
 start(_Type, _Args) ->
     {ok, Sup} = emqx_delayed_publish_sup:start_link(),
+    emqx_delayed_publish:load(),
     {ok, Sup}.
 
 stop(_State) ->
-    ok.
+    emqx_delayed_publish:unload().
 

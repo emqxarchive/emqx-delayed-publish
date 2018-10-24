@@ -19,7 +19,8 @@
 -include_lib("emqx/include/emqx.hrl").
 
 %% Hook callbacks
--export([delay_publish/1, delay_publish/2, cancel_publish/1]).
+-export([load/0, on_message_publish/1, unload/0]).
+-export([delay_publish/1, delay_publish/2, delay_publish/3, cancel_publish/1]).
 
 -export([start_link/0]).
 
@@ -27,7 +28,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
--record(delayed_message, {key, client_id, msg}).
+-record(delayed_message, {key, id, msg}).
 
 -define(TAB, ?MODULE).
 -define(SERVER, ?MODULE).
@@ -39,19 +40,38 @@
 %% Plugin callbacks
 %%------------------------------------------------------------------------------
 
+-spec(load() -> ok).
+load() ->
+    emqx:hook('message.publish', {?MODULE, on_message_publish, []}).
+
+on_message_publish(Msg = #message{topic = <<"$delayed/", Topic/binary>>, timestamp = Ts}) ->
+    [Interval, Topic1] = binary:split(Topic, <<"/">>),
+    Msg1 = Msg#message{topic = Topic1},
+    delay_publish(Msg1, undefined, binary_to_integer(Interval)),
+    {stop, Msg1};
+on_message_publish(Msg) ->
+    {ok, Msg}.
+
 delay_publish(Msg) ->
     delay_publish(Msg, undefined).
 
-delay_publish(Msg = #message{id = Id, timestamp = Ts, headers = #{'Will-Delay-Interval' := Interval}}, ClientId) ->
-    PubAt = pub_at(Ts, Interval),
-    store(#delayed_message{key = {PubAt, delayed_mid(Id)}, client_id = ClientId, msg = Msg}).
+delay_publish(Msg = #message{headers = #{'Will-Delay-Interval' := Interval}}, ID) ->
+    delay_publish(Msg, ID, Interval).
 
-cancel_publish(ClientId) ->
-    gen_server:call(?SERVER, {cancel_publish, ClientId}, infinity).
+delay_publish(Msg = #message{id = Id, timestamp = Ts}, ID, Interval) ->
+    PubAt = pub_at(Ts, Interval),
+    store(#delayed_message{key = {PubAt, delayed_mid(Id)}, id = ID, msg = Msg}).
+
+cancel_publish(ID) ->
+    gen_server:call(?SERVER, {cancel_publish, ID}, infinity).
 
 delayed_mid(undefined) ->
     emqx_guid:gen();
 delayed_mid(MsgId) -> MsgId.
+
+-spec(unload() -> ok).
+unload() ->
+    emqx:unhook('message.publish', {?MODULE, on_message_publish, []}).
 
 %%------------------------------------------------------------------------------
 %% Start delayed publish server
@@ -71,7 +91,7 @@ store(DelayedMsg) ->
 
 init([]) ->
     ok = ekka_mnesia:create_table(?TAB, [
-                {type, set},
+                {type, ordered_set},
                 {disc_copies, [node()]},
                 {local_content, true},
                 {record_name, delayed_message},
@@ -83,15 +103,15 @@ handle_call({store, DelayedMsg = #delayed_message{key = Key}}, _From, State) ->
     ok = mnesia:dirty_write(?TAB, DelayedMsg),
     {reply, ok, ensure_publish_timer(Key, State)};
 
-handle_call({cancel_publish, ClientId}, _From, State = #{timer := TRef}) ->
-    case mnesia:dirty_select(?TAB, [{#delayed_message{client_id = ClientId, _ = '_'}, [], ['$_']}]) of
+handle_call({cancel_publish, ID}, _From, State = #{timer := TRef}) ->
+    case mnesia:dirty_select(?TAB, [{#delayed_message{id = ID, _ = '_'}, [], ['$_']}]) of
         [] -> 
             {reply, ok, State};
         WillMsgs ->
             Result = lists:keysearch(mnesia:dirty_first(?TAB), 2, WillMsgs),
             lists:foreach(fun(#delayed_message{key = Key}) ->
-                            mnesia:dirty_delete({?TAB, Key})
-                        end, WillMsgs),
+                              mnesia:dirty_delete({?TAB, Key})
+                          end, WillMsgs),
             case Result of 
                 {value, _Msg} when TRef =:= undefined ->
                     {reply, ok, ensure_publish_timer(State#{timer := undefined, publish_at := 0})};
