@@ -1,5 +1,4 @@
-%%--------------------------------------------------------------------
-%% Copyright (c) 2013-2017 EMQ Enterprise, Inc. (http://emqtt.io)
+%% Copyright (c) 2018 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -12,7 +11,6 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%%--------------------------------------------------------------------
 
 -module(emqx_delayed_publish).
 
@@ -20,91 +18,149 @@
 
 -include_lib("emqx/include/emqx.hrl").
 
--export([load/0, unload/0]).
-
-%% Hook Callbacks
--export([on_message_publish/2]).
+%% Hook callbacks
+-export([load/0, on_message_publish/1, unload/0]).
 
 -export([start_link/0]).
 
-%% gen_server Callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+         code_change/3]).
 
--define(APP, ?MODULE).
+-record(delayed_message, {key, msg}).
 
--record(state, {}).
+-define(TAB, ?MODULE).
+-define(SERVER, ?MODULE).
+-define(MAX_INTERVAL, 4294967).
 
-%%--------------------------------------------------------------------
-%% Load The Plugin
-%%--------------------------------------------------------------------
+%%-type(state() :: #{timer => reference(), publish_at => integer()}).
 
+%%------------------------------------------------------------------------------
+%% Plugin callbacks
+%%------------------------------------------------------------------------------
+
+-spec(load() -> ok).
 load() ->
-    Filters = application:get_env(?APP, filters, []),
-    emqx:hook('message.publish', fun ?MODULE:on_message_publish/2, [Filters]),
-    io:format("~s is loaded.~n", [?APP]), ok.
+    emqx:hook('message.publish', {?MODULE, on_message_publish, []}).
 
-unload() ->
-    emqx:unhook('message.publish', fun ?MODULE:on_message_publish/2),
-    io:format("~s is unloaded.~n", [?APP]), ok.
+on_message_publish(Msg = #message{id = Id, topic = <<"$delayed/", Topic/binary>>, timestamp = Ts}) ->
+    [Delay, Topic1] = binary:split(Topic, <<"/">>),
+    PubAt = case binary_to_integer(Delay) of
+                Interval when Interval < ?MAX_INTERVAL ->
+                    Interval + emqx_time:now_secs(Ts);
+                Timestamp ->
+                    %% Check malicious timestamp?
+                    case (Timestamp - emqx_time:now_secs(Ts)) > ?MAX_INTERVAL of
+                        true  -> error(invalid_delayed_timestamp);
+                        false -> Timestamp
+                    end
+            end,
+    PubMsg = Msg#message{topic = Topic1},
+    ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, msg = PubMsg}),
+    {stop, PubMsg};
 
-%%--------------------------------------------------------------------
-%% Delayed Publish Message
-%%--------------------------------------------------------------------
-
-on_message_publish(Msg = #mqtt_message{topic = Topic}, Filters) ->
-    on_message_publish(binary:split(Topic, <<"/">>, [global]), Msg, Filters).
-
-on_message_publish([<<"$delayed">>, DelayTime0 | Topic0], Msg, Filters) ->
-    try
-        Topic = emqx_topic:join(Topic0),
-        case lists:filter(fun(Filter) -> emqx_topic:match(Topic, Filter) end, Filters) of
-            [] ->
-                {ok, Msg};
-            [_] ->
-                DelayTime =  binary_to_integer(DelayTime0) + erlang:system_time(seconds),
-                delayed_publish(Topic, Msg#mqtt_message{topic = Topic}, DelayTime),
-                {stop, Msg}
-        end
-    catch
-        _:Reason->
-            lager:error("Delayed publish reason ~p, error:~p", [Reason, erlang:get_stacktrace()]),
-            {ok, Msg}
-    end;
-
-on_message_publish(_, Msg, _Filters) ->
+on_message_publish(Msg) ->
     {ok, Msg}.
 
+delayed_mid(undefined) ->
+    emqx_guid:gen();
+delayed_mid(MsgId) -> MsgId.
+
+-spec(unload() -> ok).
+unload() ->
+    emqx:unhook('message.publish', {?MODULE, on_message_publish, []}).
+
+%%------------------------------------------------------------------------------
+%% Start delayed publish server
+%%------------------------------------------------------------------------------
+
+-spec(start_link() -> emqx_types:startlink_ret()).
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-delayed_publish(Topic, Msg, DelayTime) ->
-    gen_server:cast(?MODULE, {delayed_publish, Topic, Msg, DelayTime}).
+-spec(store(#delayed_message{}) -> ok).
+store(DelayedMsg) ->
+    gen_server:call(?SERVER, {store, DelayedMsg}, infinity).
 
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 %% gen_server callback
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
+
 init([]) ->
-    {ok, #state{}}.
+    ok = ekka_mnesia:create_table(?TAB, [
+                {type, set},
+                {disc_copies, [node()]},
+                {local_content, true},
+                {record_name, delayed_message},
+                {attributes, record_info(fields, delayed_message)}]),
+    ok = mnesia:wait_for_tables([?TAB], 3000),
+    {ok, ensure_publish_timer(#{timer => undefined, publish_at => 0})}.
 
-handle_call(_Req, _From, State) ->
-    {reply, ok, State}.
+handle_call({store, DelayedMsg = #delayed_message{key = Key}}, _From, State) ->
+    ok = mnesia:dirty_write(?TAB, DelayedMsg),
+    {reply, ok, ensure_publish_timer(Key, State)};
 
-handle_cast({delayed_publish, Topic, Msg, DelayTime}, State) ->
-    Interval = (DelayTime*1000) - erlang:system_time(milli_seconds),
-    erlang:send_after(Interval, self(), {release_publish, Topic, Msg}),
-    {noreply, State, hibernate}.
+handle_call(Req, _From, State) ->
+    emqx_logger:error("[Delayed] unexpected call: ~p", [Req]),
+    {reply, ignored, State}.
 
-handle_info({release_publish, Topic, Msg}, State) ->
-    emqx_pubsub:publish(Topic, Msg),
-    {noreply, State, hibernate};
-
-handle_info(_Info, State) ->
+handle_cast(Msg, State) ->
+    emqx_logger:error("[Delayed] unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
-terminate(_, _) ->
-    ok.
+%% Do Publish...
+handle_info({timeout, TRef, do_publish}, State = #{timer := TRef}) ->
+    DeletedKeys = do_publish(mnesia:dirty_first(?TAB), os:system_time(seconds)),
+    lists:foreach(fun(Key) -> mnesia:dirty_delete(?TAB, Key) end, DeletedKeys),
+    {noreply, ensure_publish_timer(State#{timer := undefined, publish_at := 0})};
 
-code_change(_, State, _) ->
+handle_info(Info, State) ->
+    emqx_logger:error("[Pool] unexpected info: ~p", [Info]),
+    {noreply, State}.
+
+terminate(_Reason, #{timer := TRef}) ->
+    emqx_misc:cancel_timer(TRef).
+
+code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%%------------------------------------------------------------------------------
+%% Internal functions
+%%------------------------------------------------------------------------------
+
+%% Ensure publish timer
+ensure_publish_timer(State) ->
+    ensure_publish_timer(mnesia:dirty_first(?TAB), State).
+
+ensure_publish_timer('$end_of_table', State) ->
+    State#{timer := undefined, publish_at := 0};
+ensure_publish_timer({Ts, _Id}, State = #{timer := undefined}) ->
+    ensure_publish_timer(Ts, os:system_time(seconds), State);
+ensure_publish_timer({Ts, _Id}, State = #{timer := TRef, publish_at := PubAt})
+    when Ts < PubAt ->
+    ok = emqx_misc:cancel_timer(TRef),
+    ensure_publish_timer(Ts, os:system_time(seconds), State);
+ensure_publish_timer(_Key, State) ->
+    State.
+
+ensure_publish_timer(Ts, Now, State) ->
+    Interval = max(1, Ts - Now),
+    TRef = emqx_misc:start_timer(timer:seconds(Interval), do_publish),
+    State#{timer := TRef, publish_at := Now + Interval}.
+
+do_publish(Key, Now) ->
+    do_publish(Key, Now, []).
+
+%% Do publish
+do_publish('$end_of_table', _Now, Acc) ->
+    Acc;
+do_publish({Ts, _Id}, Now, Acc) when Ts > Now ->
+    Acc;
+do_publish(Key = {Ts, _Id}, Now, Acc) when Ts =< Now ->
+    case mnesia:dirty_read(?TAB, Key) of
+        [] -> ok;
+        [#delayed_message{msg = Msg}] ->
+            emqx_pool:async_submit(fun emqx_broker:publish/1, [Msg])
+    end,
+    do_publish(mnesia:dirty_next(?TAB, Key), Now, [Key|Acc]).
 

@@ -1,5 +1,4 @@
-%%--------------------------------------------------------------------
-%% Copyright (c) 2013-2017 EMQ Enterprise, Inc. (http://emqtt.io)
+%% Copyright (c) 2018 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -12,7 +11,6 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%%--------------------------------------------------------------------
 
 -module(emqx_delayed_publish_sup).
 
@@ -20,14 +18,17 @@
 
 -export([start_link/0]).
 
-%% Supervisor callbacks
 -export([init/1]).
-
--define(CHILD(M), {M, {M, start_link, []}, permanent, 5000, worker, [M]}).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, {{one_for_one, 10, 100}, [?CHILD(emqx_delayed_publish)]}}.
+    {ok, {{one_for_one, 10, 100},
+          [#{id       => delayed_publish,
+             start    => {emqx_delayed_publish, start_link, []},
+             restart  => permanent,
+             shutdown => 5000,
+             type     => worker,
+             modules  => [emqx_delayed_publish]}]}}.
 
