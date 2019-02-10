@@ -10,10 +10,10 @@ Specification
 A MQTT client can publish a delayed message to broker. A Delayed Publish Message is identified using  a special style of Topic Name. The format is:
 
 ```
-$delay/{DelayInterval}/{TopicName}
+$delayed/{DelayInterval}/{TopicName}
 ```
 
-- `$delay` is a literal string that marks the Topic Name as being a delayed topic.
+- `$delayed` is a literal string that marks the Topic Name as being a delayed topic.
 - `{DelayInterval}` The Delayed Interval which specifies the delay seconds of a MQTT message.
   The max interval allowed is 4294967.
 - `{TopicName}` The topic name of a MQTT message
@@ -21,9 +21,9 @@ $delay/{DelayInterval}/{TopicName}
 
 Exampels:
 
-- `$delay/15/x/y`: Publish the MQTT message to topic `x/y` 15 seconds later.
-- `$delay/60//a/b`: Publish the MQTT message to `/a/b` 1 minute later.
-- `$delay/3600/$SYS/topic`: Publish the MQTT message to `$SYS/topic` 1 hour later.
+- `$delayed/15/x/y`: Publish the MQTT message to topic `x/y` 15 seconds later.
+- `$delayed/60//a/b`: Publish the MQTT message to `/a/b` 1 minute later.
+- `$delayed/3600/$SYS/topic`: Publish the MQTT message to `$SYS/topic` 1 hour later.
 
 
 The MQTT broker should store a delayed message in memory or disc and then publish it when the delay expired.
