@@ -57,7 +57,7 @@ load_case(_Config) ->
 
 delayed_message(_Config) ->
     DelayedMsg = emqx_message:make(?MODULE, 1, <<"$delayed/5/publish">>, <<"delayed_m">>),
-    ?assertEqual({stop, DelayedMsg#message{topic = <<"publish">>}}, on_message_publish(DelayedMsg)),
+    ?assertEqual({ok, DelayedMsg#message{topic = <<"publish">>, headers = #{allow_publish => false}}}, on_message_publish(DelayedMsg)),
 
     Msg = emqx_message:make(?MODULE, 1, <<"publish">>, <<"delayed_m">>),
     ?assertEqual({ok, Msg}, on_message_publish(Msg)),
