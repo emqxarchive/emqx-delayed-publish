@@ -34,8 +34,12 @@ groups() ->
      {emqx_delayed_publish, [sequence], [delayed_message]}].
 
 init_per_suite(Config) ->
-    DataDir = proplists:get_value(data_dir, Config),
-    [start_apps(App, DataDir) || App <- [emqx, emqx_delayed_publish]],
+    [start_apps(App, SchemaFile, ConfigFile) ||
+        {App, SchemaFile, ConfigFile}
+            <- [{emqx, deps_path(emqx, "priv/emqx.schema"),
+                       deps_path(emqx, "etc/emqx.conf")},
+                {emqx_delayed_publish, local_path("priv/emqx_delayed_publish.schema"),
+                                     local_path("etc/emqx_delayed_publish.conf")}]],
     Config.
 
 end_per_suite(_Config) ->
@@ -73,10 +77,36 @@ delayed_message(_Config) ->
 on_message_publish(Msg) ->
     emqx_delayed_publish:on_message_publish(Msg).
 
-start_apps(App, DataDir) ->
-    Schema = cuttlefish_schema:files([filename:join([DataDir, atom_to_list(App) ++ ".schema"])]),
-    Conf = conf_parse:file(filename:join([DataDir, atom_to_list(App) ++ ".conf"])),
+start_apps(App, SchemaFile, ConfigFile) ->
+    read_schema_configs(App, SchemaFile, ConfigFile),
+    set_special_configs(App),
+    application:ensure_all_started(App).
+
+read_schema_configs(App, SchemaFile, ConfigFile) ->
+    ct:pal("Read configs - SchemaFile: ~p, ConfigFile: ~p", [SchemaFile, ConfigFile]),
+    Schema = cuttlefish_schema:files([SchemaFile]),
+    Conf = conf_parse:file(ConfigFile),
     NewConfig = cuttlefish_generator:map(Schema, Conf),
     Vals = proplists:get_value(App, NewConfig, []),
-    [application:set_env(App, Par, Value) || {Par, Value} <- Vals],
-    application:ensure_all_started(App).
+    [application:set_env(App, Par, Value) || {Par, Value} <- Vals].
+
+set_special_configs(emqx) ->
+    application:set_env(emqx, allow_anonymous, false),
+    application:set_env(emqx, enable_acl_cache, false),
+    application:set_env(emqx, plugins_loaded_file,
+                        deps_path(emqx, "test/emqx_SUITE_data/loaded_plugins"));
+set_special_configs(_App) ->
+    ok.
+
+deps_path(App, RelativePath) ->
+    %% Note: not lib_dir because etc dir is not sym-link-ed to _build dir
+    %% but priv dir is
+    Path0 = code:priv_dir(App),
+    Path = case file:read_link(Path0) of
+               {ok, Resolved} -> Resolved;
+               {error, _} -> Path0
+           end,
+    filename:join([Path, "..", RelativePath]).
+
+local_path(RelativePath) ->
+    deps_path(emqx_delayed_publish, RelativePath).

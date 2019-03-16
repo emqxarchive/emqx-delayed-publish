@@ -25,4 +25,3 @@ start(_Type, _Args) ->
 
 stop(_State) ->
     emqx_delayed_publish:unload().
-
