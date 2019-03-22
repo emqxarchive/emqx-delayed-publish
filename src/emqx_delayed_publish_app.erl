@@ -18,9 +18,9 @@
 
 -emqx_plugin(?MODULE).
 
--export([  start/2
-         , stop/1
-         ]).
+-export([ start/2
+        , stop/1
+        ]).
 
 start(_Type, _Args) ->
     {ok, Sup} = emqx_delayed_publish_sup:start_link(),
