@@ -17,6 +17,7 @@
 -behaviour(gen_server).
 
 -include_lib("emqx/include/emqx.hrl").
+-include_lib("emqx/include/logger.hrl").
 
 %% Hook callbacks
 -export([ load/0
@@ -113,11 +114,11 @@ handle_call({store, DelayedMsg = #delayed_message{key = Key}}, _From, State) ->
     {reply, ok, ensure_publish_timer(Key, State)};
 
 handle_call(Req, _From, State) ->
-    emqx_logger:error("[Delayed] unexpected call: ~p", [Req]),
+    ?LOG(error, "[Delayed] unexpected call: ~p", [Req]),
     {reply, ignored, State}.
 
 handle_cast(Msg, State) ->
-    emqx_logger:error("[Delayed] unexpected cast: ~p", [Msg]),
+    ?LOG(error, "[Delayed] unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
 %% Do Publish...
@@ -127,7 +128,7 @@ handle_info({timeout, TRef, do_publish}, State = #{timer := TRef}) ->
     {noreply, ensure_publish_timer(State#{timer := undefined, publish_at := 0})};
 
 handle_info(Info, State) ->
-    emqx_logger:error("[Pool] unexpected info: ~p", [Info]),
+    ?LOG(error, "[Pool] unexpected info: ~p", [Info]),
     {noreply, State}.
 
 terminate(_Reason, #{timer := TRef}) ->
