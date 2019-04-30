@@ -1,32 +1,27 @@
-PROJECT = emqx_delayed_publish
-PROJECT_DESCRIPTION = EMQ X Delayed Publish
+## shallow clone for speed
 
-NO_AUTOPATCH = cuttlefish
+REBAR_GIT_CLONE_OPTIONS += --depth 1
+export REBAR_GIT_CLONE_OPTIONS
 
-CUR_BRANCH := $(shell git branch | grep -e "^*" | cut -d' ' -f 2)
-BRANCH := $(if $(filter $(CUR_BRANCH), master develop), $(CUR_BRANCH), develop)
+REBAR = rebar3
+all: compile
 
-BUILD_DEPS = emqx cuttlefish
+compile:
+	$(REBAR) compile
 
-dep_emqx = git-emqx https://github.com/emqx/emqx $(BRANCH)
+clean:
+	$(REBAR) clean
 
-dep_cuttlefish = git-emqx https://github.com/emqx/cuttlefish v2.2.1
+ct: compile
+	$(REBAR) as test ct -v
 
-ERLC_OPTS += +debug_info
+eunit: compile
+	$(REBAR) as test eunit
 
-TEST_ERLC_OPTS += +debug_info
+xref:
+	$(REBAR) xref
 
-EUNIT_OPTS = verbose
-
-COVER = true
-
-CT_SUITES = emqx_delayed_publish
-
-CT_OPTS = -erl_args -name emqx_delayed_publish_ct@127.0.0.1
-
-$(shell [ -f erlang.mk ] || curl -s -o erlang.mk https://raw.githubusercontent.com/emqx/erlmk/master/erlang.mk)
-include erlang.mk
-
-app.config::
-	./deps/cuttlefish/cuttlefish -l info -e etc/ -c etc/emqx_delayed_publish.conf -i priv/emqx_delayed_publish.schema -d data
-
+distclean:
+	rm -rf _build
+	rm -f data/app.*.config
+	rm -f data/vm.*.args
