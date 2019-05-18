@@ -32,4 +32,3 @@ $(CUTTLEFISH_SCRIPT):
 
 app.config: $(CUTTLEFISH_SCRIPT) etc/emqx_delayed_publish.conf
 	$(verbose) $(CUTTLEFISH_SCRIPT) -l info -e etc/ -c etc/emqx_delayed_publish.conf -i priv/emqx_delayed_publish.schema -d data
-
