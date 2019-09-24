@@ -1516,7 +1516,7 @@ end}.
   {datatype, {enum, [mqttv3, mqttv4, mqttv5]}}
 ]}.
 
-{mapping, "bridge.$name.client_id", "emqx.bridges", [
+{mapping, "bridge.$name.clientid", "emqx.bridges", [
   {datatype, string}
 ]}.
 
