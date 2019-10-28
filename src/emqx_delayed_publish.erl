@@ -101,7 +101,7 @@ store(DelayedMsg) ->
 
 init([]) ->
     ok = ekka_mnesia:create_table(?TAB, [
-                {type, set},
+                {type, ordered_set},
                 {disc_copies, [node()]},
                 {local_content, true},
                 {record_name, delayed_message},
