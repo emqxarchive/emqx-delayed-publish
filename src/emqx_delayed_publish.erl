@@ -70,7 +70,10 @@ on_message_publish(Msg = #message{id = Id, topic = <<"$delayed/", Topic/binary>>
                     end
             end,
     PubMsg = Msg#message{topic = Topic1},
-    Headers = PubMsg#message.headers,
+    Headers = case PubMsg#message.headers of
+        undefined -> #{};
+        Headers0 -> Headers0
+    end,
     ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, msg = PubMsg}),
     {stop, PubMsg#message{headers = Headers#{allow_publish => false}}};
 
