@@ -61,16 +61,19 @@ on_message_publish(Msg = #message{id = Id, topic = <<"$delayed/", Topic/binary>>
     [Delay, Topic1] = binary:split(Topic, <<"/">>),
     PubAt = case binary_to_integer(Delay) of
                 Interval when Interval < ?MAX_INTERVAL ->
-                    Interval + emqx_time:now_secs(Ts);
+                    Interval + erlang:round(Ts / 1000);
                 Timestamp ->
                     %% Check malicious timestamp?
-                    case (Timestamp - emqx_time:now_secs(Ts)) > ?MAX_INTERVAL of
+                    case (Timestamp - erlang:round(Ts / 1000)) > ?MAX_INTERVAL of
                         true  -> error(invalid_delayed_timestamp);
                         false -> Timestamp
                     end
             end,
     PubMsg = Msg#message{topic = Topic1},
-    Headers = PubMsg#message.headers,
+    Headers = case PubMsg#message.headers of
+        undefined -> #{};
+        Headers0 -> Headers0
+    end,
     ok = store(#delayed_message{key = {PubAt, delayed_mid(Id)}, msg = PubMsg}),
     {stop, PubMsg#message{headers = Headers#{allow_publish => false}}};
 
