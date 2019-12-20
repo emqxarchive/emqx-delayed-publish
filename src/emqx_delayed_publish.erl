@@ -116,6 +116,7 @@ init([]) ->
 
 handle_call({store, DelayedMsg = #delayed_message{key = Key}}, _From, State) ->
     ok = mnesia:dirty_write(?TAB, DelayedMsg),
+    emqx_metrics:inc('messages.delayed'),
     {reply, ok, ensure_publish_timer(Key, State)};
 
 handle_call(Req, _From, State) ->
@@ -130,6 +131,7 @@ handle_cast(Msg, State) ->
 handle_info({timeout, TRef, do_publish}, State = #{timer := TRef}) ->
     DeletedKeys = do_publish(mnesia:dirty_first(?TAB), os:system_time(seconds)),
     lists:foreach(fun(Key) -> mnesia:dirty_delete(?TAB, Key) end, DeletedKeys),
+    emqx_metrics:dec('messages.delayed', length(DeletedKeys)),
     {noreply, ensure_publish_timer(State#{timer := undefined, publish_at := 0})};
 
 handle_info(Info, State) ->
