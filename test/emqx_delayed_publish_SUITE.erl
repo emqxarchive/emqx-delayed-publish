@@ -16,38 +16,44 @@
 
 -module(emqx_delayed_publish_SUITE).
 
+-import(emqx_delayed_publish, [on_message_publish/1]).
+
 -compile(export_all).
 -compile(nowarn_export_all).
 
 -record(delayed_message, {key, msg}).
 
 -include_lib("common_test/include/ct.hrl").
-
 -include_lib("eunit/include/eunit.hrl").
-
 -include_lib("emqx/include/emqx.hrl").
 
-all() ->
-    [{group, load},
-     {group, emqx_delayed_publish}].
+%%--------------------------------------------------------------------
+%% Setups
+%%--------------------------------------------------------------------
 
-groups() ->
-    [{load, [sequence], [load_case]},
-     {emqx_delayed_publish, [sequence], [delayed_message]}].
+all() ->
+    emqx_ct:all(?MODULE).
 
 init_per_suite(Config) ->
-    [start_apps(App, SchemaFile, ConfigFile) ||
-        {App, SchemaFile, ConfigFile}
-            <- [{emqx, deps_path(emqx, "priv/emqx.schema"),
-                       deps_path(emqx, "etc/emqx.conf")},
-                {emqx_delayed_publish, local_path("priv/emqx_delayed_publish.schema"),
-                                     local_path("etc/emqx_delayed_publish.conf")}]],
+    emqx_ct_helpers:start_apps([emqx_delayed_publish], fun set_special_configs/1),
     Config.
 
-end_per_suite(_Config) ->
-    [application:stop(App) || App <- [emqx_delayed_publish, emqx]].
+end_per_suite(_) ->
+    emqx_ct_helpers:stop_apps([emqx_delayed_publish]).
 
-load_case(_Config) ->
+set_special_configs(emqx) ->
+    application:set_env(emqx, allow_anonymous, false),
+    application:set_env(emqx, enable_acl_cache, false),
+    application:set_env(emqx, plugins_loaded_file,
+                        emqx_ct_helpers:deps_path(emqx, "test/emqx_SUITE_data/loaded_plugins"));
+set_special_configs(_App) ->
+    ok.
+
+%%--------------------------------------------------------------------
+%% Test cases
+%%--------------------------------------------------------------------
+
+t_load_case(_) ->
     ok = emqx_delayed_publish:unload(),
     timer:sleep(100),
     UnHooks = emqx_hooks:lookup('message.publish'),
@@ -57,7 +63,7 @@ load_case(_Config) ->
     ?assertEqual(1, length(Hooks)),
     ok.
 
-delayed_message(_Config) ->
+t_delayed_message(_) ->
     DelayedMsg = emqx_message:make(?MODULE, 1, <<"$delayed/5/publish">>, <<"delayed_m">>),
     ?assertEqual({stop, DelayedMsg#message{topic = <<"publish">>, headers = #{allow_publish => false}}}, on_message_publish(DelayedMsg)),
 
@@ -75,40 +81,3 @@ delayed_message(_Config) ->
     %% ExMsg = emqx_message:make(emqx_delayed_publish_SUITE, 1, <<"$delayed/time/publish">>, <<"delayed_message">>),
     %% {ok, _} = on_message_publish(ExMsg),
     ok.
-
-on_message_publish(Msg) ->
-    emqx_delayed_publish:on_message_publish(Msg).
-
-start_apps(App, SchemaFile, ConfigFile) ->
-    read_schema_configs(App, SchemaFile, ConfigFile),
-    set_special_configs(App),
-    application:ensure_all_started(App).
-
-read_schema_configs(App, SchemaFile, ConfigFile) ->
-    ct:pal("Read configs - SchemaFile: ~p, ConfigFile: ~p", [SchemaFile, ConfigFile]),
-    Schema = cuttlefish_schema:files([SchemaFile]),
-    Conf = conf_parse:file(ConfigFile),
-    NewConfig = cuttlefish_generator:map(Schema, Conf),
-    Vals = proplists:get_value(App, NewConfig, []),
-    [application:set_env(App, Par, Value) || {Par, Value} <- Vals].
-
-set_special_configs(emqx) ->
-    application:set_env(emqx, allow_anonymous, false),
-    application:set_env(emqx, enable_acl_cache, false),
-    application:set_env(emqx, plugins_loaded_file,
-                        deps_path(emqx, "test/emqx_SUITE_data/loaded_plugins"));
-set_special_configs(_App) ->
-    ok.
-
-deps_path(App, RelativePath) ->
-    %% Note: not lib_dir because etc dir is not sym-link-ed to _build dir
-    %% but priv dir is
-    Path0 = code:priv_dir(App),
-    Path = case file:read_link(Path0) of
-               {ok, Resolved} -> Resolved;
-               {error, _} -> Path0
-           end,
-    filename:join([Path, "..", RelativePath]).
-
-local_path(RelativePath) ->
-    deps_path(emqx_delayed_publish, RelativePath).

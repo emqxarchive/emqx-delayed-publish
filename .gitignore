@@ -20,3 +20,4 @@ erlang.mk
 _build/
 rebar.lock
 .rebar3/
+etc/emqx_delayed_publish.conf.rendered
