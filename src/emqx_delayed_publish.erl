@@ -106,7 +106,7 @@ init([]) ->
                 {local_content, true},
                 {record_name, delayed_message},
                 {attributes, record_info(fields, delayed_message)}]),
-    ok = mnesia:wait_for_tables([?TAB], 3000),
+    ok = ekka_mnesia:copy_table(?TAB, disc_copies),
     {ok, ensure_publish_timer(#{timer => undefined, publish_at => 0})}.
 
 handle_call({store, DelayedMsg = #delayed_message{key = Key}}, _From, State) ->
